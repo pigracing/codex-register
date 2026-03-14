@@ -114,8 +114,6 @@ EMAIL_SERVICE_DEFAULTS = {
 
 # 验证码相关
 OTP_CODE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
-OTP_WAIT_TIMEOUT = 120  # 秒
-OTP_POLL_INTERVAL = 3  # 秒
 OTP_MAX_ATTEMPTS = 40  # 最大轮询次数
 
 # 验证码提取正则（增强版）

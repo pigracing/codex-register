@@ -2,7 +2,18 @@
 配置模块
 """
 
-from .settings import Settings, get_settings, update_settings, get_database_url
+from .settings import (
+    Settings,
+    get_settings,
+    update_settings,
+    get_database_url,
+    init_default_settings,
+    get_setting_definition,
+    get_all_setting_definitions,
+    SETTING_DEFINITIONS,
+    SettingCategory,
+    SettingDefinition,
+)
 from .constants import (
     AccountStatus,
     TaskStatus,
@@ -22,6 +33,12 @@ __all__ = [
     'get_settings',
     'update_settings',
     'get_database_url',
+    'init_default_settings',
+    'get_setting_definition',
+    'get_all_setting_definitions',
+    'SETTING_DEFINITIONS',
+    'SettingCategory',
+    'SettingDefinition',
     'AccountStatus',
     'TaskStatus',
     'EmailServiceType',

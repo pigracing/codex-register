@@ -18,6 +18,13 @@ let availableServices = {
     custom_domain: { available: false, services: [] }
 };
 
+// WebSocket 相关变量
+let webSocket = null;
+let batchWebSocket = null;  // 批量任务 WebSocket
+let useWebSocket = true;  // 是否使用 WebSocket
+let wsHeartbeatInterval = null;  // 心跳定时器
+let batchWsHeartbeatInterval = null;  // 批量任务心跳定时器
+
 // DOM 元素
 const elements = {
     form: document.getElementById('registration-form'),
@@ -297,13 +304,125 @@ async function handleSingleRegistration(requestData) {
         showTaskStatus(data);
         updateTaskStatus('running');
 
-        // 开始轮询日志
-        startLogPolling(data.task_uuid);
+        // 优先使用 WebSocket
+        connectWebSocket(data.task_uuid);
 
     } catch (error) {
         addLog('error', `[错误] 启动失败: ${error.message}`);
         toast.error(error.message);
         resetButtons();
+    }
+}
+
+
+// ============== WebSocket 功能 ==============
+
+// 连接 WebSocket
+function connectWebSocket(taskUuid) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/task/${taskUuid}`;
+
+    try {
+        webSocket = new WebSocket(wsUrl);
+
+        webSocket.onopen = () => {
+            console.log('WebSocket 连接成功');
+            useWebSocket = true;
+            // 停止轮询（如果有）
+            stopLogPolling();
+            // 开始心跳
+            startWebSocketHeartbeat();
+        };
+
+        webSocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'log') {
+                const logType = getLogType(data.message);
+                addLog(logType, data.message);
+            } else if (data.type === 'status') {
+                updateTaskStatus(data.status);
+
+                // 检查是否完成
+                if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
+                    disconnectWebSocket();
+                    resetButtons();
+
+                    if (data.status === 'completed') {
+                        addLog('success', '[成功] 注册成功！');
+                        toast.success('注册成功！');
+                        // 刷新账号列表
+                        loadRecentAccounts();
+                    } else if (data.status === 'failed') {
+                        addLog('error', '[错误] 注册失败');
+                        toast.error('注册失败');
+                    } else if (data.status === 'cancelled' || data.status === 'cancelling') {
+                        addLog('warning', '[警告] 任务已取消');
+                    }
+                }
+            } else if (data.type === 'pong') {
+                // 心跳响应，忽略
+            }
+        };
+
+        webSocket.onclose = (event) => {
+            console.log('WebSocket 连接关闭:', event.code);
+            stopWebSocketHeartbeat();
+
+            // 如果任务仍在运行，切换到轮询
+            if (currentTask && ['pending', 'running'].includes(currentTask.status)) {
+                console.log('切换到轮询模式');
+                useWebSocket = false;
+                startLogPolling(currentTask.task_uuid);
+            }
+        };
+
+        webSocket.onerror = (error) => {
+            console.error('WebSocket 错误:', error);
+            // 切换到轮询
+            useWebSocket = false;
+            stopWebSocketHeartbeat();
+            startLogPolling(taskUuid);
+        };
+
+    } catch (error) {
+        console.error('WebSocket 连接失败:', error);
+        useWebSocket = false;
+        startLogPolling(taskUuid);
+    }
+}
+
+// 断开 WebSocket
+function disconnectWebSocket() {
+    stopWebSocketHeartbeat();
+    if (webSocket) {
+        webSocket.close();
+        webSocket = null;
+    }
+}
+
+// 开始心跳
+function startWebSocketHeartbeat() {
+    stopWebSocketHeartbeat();
+    wsHeartbeatInterval = setInterval(() => {
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+            webSocket.send(JSON.stringify({ type: 'ping' }));
+        }
+    }, 25000);  // 每 25 秒发送一次心跳
+}
+
+// 停止心跳
+function stopWebSocketHeartbeat() {
+    if (wsHeartbeatInterval) {
+        clearInterval(wsHeartbeatInterval);
+        wsHeartbeatInterval = null;
+    }
+}
+
+// 发送取消请求
+function cancelViaWebSocket() {
+    if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+        webSocket.send(JSON.stringify({ type: 'cancel' }));
     }
 }
 
@@ -340,26 +459,61 @@ async function handleBatchRegistration(requestData) {
 // 取消任务
 async function handleCancelTask() {
     if (isBatchMode && currentBatch) {
-        try {
-            await api.post(`/registration/batch/${currentBatch.batch_id}/cancel`);
+        // 优先通过 WebSocket 取消批量任务
+        if (batchWebSocket && batchWebSocket.readyState === WebSocket.OPEN) {
+            cancelBatchViaWebSocket();
             addLog('warning', '[警告] 批量任务取消请求已提交');
             toast.info('任务取消请求已提交');
-            stopBatchPolling();
-            resetButtons();
-        } catch (error) {
-            addLog('error', `[错误] 取消失败: ${error.message}`);
-            toast.error(error.message);
+        } else {
+            // 降级到 REST API
+            try {
+                await api.post(`/registration/batch/${currentBatch.batch_id}/cancel`);
+                addLog('warning', '[警告] 批量任务取消请求已提交');
+                toast.info('任务取消请求已提交');
+                stopBatchPolling();
+                resetButtons();
+            } catch (error) {
+                addLog('error', `[错误] 取消失败: ${error.message}`);
+                toast.error(error.message);
+            }
+        }
+    } else if (isOutlookBatchMode && currentBatch) {
+        // Outlook 批量任务取消
+        if (batchWebSocket && batchWebSocket.readyState === WebSocket.OPEN) {
+            cancelBatchViaWebSocket();
+            addLog('warning', '[警告] Outlook 批量任务取消请求已提交');
+            toast.info('任务取消请求已提交');
+        } else {
+            // 降级到 REST API
+            try {
+                await api.post(`/registration/outlook-batch/${currentBatch.batch_id}/cancel`);
+                addLog('warning', '[警告] Outlook 批量任务取消请求已提交');
+                toast.info('任务取消请求已提交');
+                stopBatchPolling();
+                resetButtons();
+            } catch (error) {
+                addLog('error', `[错误] 取消失败: ${error.message}`);
+                toast.error(error.message);
+            }
         }
     } else if (currentTask) {
-        try {
-            await api.post(`/registration/tasks/${currentTask.task_uuid}/cancel`);
-            addLog('warning', '[警告] 任务已取消');
-            toast.info('任务已取消');
-            stopLogPolling();
-            resetButtons();
-        } catch (error) {
-            addLog('error', `[错误] 取消失败: ${error.message}`);
-            toast.error(error.message);
+        // 优先通过 WebSocket 取消
+        if (useWebSocket && webSocket && webSocket.readyState === WebSocket.OPEN) {
+            cancelViaWebSocket();
+            addLog('warning', '[警告] 任务取消请求已提交');
+            toast.info('任务取消请求已提交');
+        } else {
+            // 降级到 REST API
+            try {
+                await api.post(`/registration/tasks/${currentTask.task_uuid}/cancel`);
+                addLog('warning', '[警告] 任务已取消');
+                toast.info('任务已取消');
+                stopLogPolling();
+                resetButtons();
+            } catch (error) {
+                addLog('error', `[错误] 取消失败: ${error.message}`);
+                toast.error(error.message);
+            }
         }
     }
 }
@@ -634,6 +788,9 @@ function resetButtons() {
     currentTask = null;
     currentBatch = null;
     isBatchMode = false;
+    // 断开 WebSocket
+    disconnectWebSocket();
+    disconnectBatchWebSocket();
     // 注意：不重置 isOutlookBatchMode，因为用户可能想继续使用 Outlook 批量模式
 }
 
@@ -765,8 +922,8 @@ async function handleOutlookBatchRegistration() {
         // 初始化批量状态显示
         showBatchStatus({ count: data.to_register });
 
-        // 开始轮询批量状态
-        startOutlookBatchPolling(data.batch_id);
+        // 优先使用 WebSocket
+        connectBatchWebSocket(data.batch_id);
 
     } catch (error) {
         addLog('error', `[错误] 启动失败: ${error.message}`);
@@ -775,7 +932,125 @@ async function handleOutlookBatchRegistration() {
     }
 }
 
-// 开始轮询 Outlook 批量状态
+// ============== 批量任务 WebSocket 功能 ==============
+
+// 连接批量任务 WebSocket
+function connectBatchWebSocket(batchId) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/batch/${batchId}`;
+
+    try {
+        batchWebSocket = new WebSocket(wsUrl);
+
+        batchWebSocket.onopen = () => {
+            console.log('批量任务 WebSocket 连接成功');
+            // 停止轮询（如果有）
+            stopBatchPolling();
+            // 开始心跳
+            startBatchWebSocketHeartbeat();
+        };
+
+        batchWebSocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'log') {
+                const logType = getLogType(data.message);
+                addLog(logType, data.message);
+            } else if (data.type === 'status') {
+                // 更新进度
+                if (data.total !== undefined) {
+                    updateBatchProgress({
+                        total: data.total,
+                        completed: data.completed || 0,
+                        success: data.success || 0,
+                        failed: data.failed || 0
+                    });
+                }
+
+                // 检查是否完成
+                if (['completed', 'failed', 'cancelled', 'cancelling'].includes(data.status)) {
+                    disconnectBatchWebSocket();
+                    resetButtons();
+
+                    if (data.status === 'completed') {
+                        addLog('success', `[完成] Outlook 批量任务完成！成功: ${data.success}, 失败: ${data.failed}, 跳过: ${data.skipped || 0}`);
+                        if (data.success > 0) {
+                            toast.success(`Outlook 批量注册完成，成功 ${data.success} 个`);
+                            loadRecentAccounts();
+                        } else {
+                            toast.warning('Outlook 批量注册完成，但没有成功注册任何账号');
+                        }
+                    } else if (data.status === 'failed') {
+                        addLog('error', '[错误] 批量任务执行失败');
+                        toast.error('批量任务执行失败');
+                    } else if (data.status === 'cancelled' || data.status === 'cancelling') {
+                        addLog('warning', '[警告] 批量任务已取消');
+                    }
+                }
+            } else if (data.type === 'pong') {
+                // 心跳响应，忽略
+            }
+        };
+
+        batchWebSocket.onclose = (event) => {
+            console.log('批量任务 WebSocket 连接关闭:', event.code);
+            stopBatchWebSocketHeartbeat();
+
+            // 如果任务仍在运行，切换到轮询
+            if (currentBatch && !['completed', 'failed', 'cancelled'].includes(currentBatch.status)) {
+                console.log('切换到轮询模式');
+                startOutlookBatchPolling(currentBatch.batch_id);
+            }
+        };
+
+        batchWebSocket.onerror = (error) => {
+            console.error('批量任务 WebSocket 错误:', error);
+            stopBatchWebSocketHeartbeat();
+            // 切换到轮询
+            startOutlookBatchPolling(batchId);
+        };
+
+    } catch (error) {
+        console.error('批量任务 WebSocket 连接失败:', error);
+        startOutlookBatchPolling(batchId);
+    }
+}
+
+// 断开批量任务 WebSocket
+function disconnectBatchWebSocket() {
+    stopBatchWebSocketHeartbeat();
+    if (batchWebSocket) {
+        batchWebSocket.close();
+        batchWebSocket = null;
+    }
+}
+
+// 开始批量任务心跳
+function startBatchWebSocketHeartbeat() {
+    stopBatchWebSocketHeartbeat();
+    batchWsHeartbeatInterval = setInterval(() => {
+        if (batchWebSocket && batchWebSocket.readyState === WebSocket.OPEN) {
+            batchWebSocket.send(JSON.stringify({ type: 'ping' }));
+        }
+    }, 25000);  // 每 25 秒发送一次心跳
+}
+
+// 停止批量任务心跳
+function stopBatchWebSocketHeartbeat() {
+    if (batchWsHeartbeatInterval) {
+        clearInterval(batchWsHeartbeatInterval);
+        batchWsHeartbeatInterval = null;
+    }
+}
+
+// 发送批量任务取消请求
+function cancelBatchViaWebSocket() {
+    if (batchWebSocket && batchWebSocket.readyState === WebSocket.OPEN) {
+        batchWebSocket.send(JSON.stringify({ type: 'cancel' }));
+    }
+}
+
+// 开始轮询 Outlook 批量状态（降级方案）
 function startOutlookBatchPolling(batchId) {
     batchPollingInterval = setInterval(async () => {
         try {

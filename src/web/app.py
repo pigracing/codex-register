@@ -15,6 +15,8 @@ from fastapi.responses import HTMLResponse
 
 from ..config.settings import get_settings
 from .routes import api_router
+from .routes.websocket import router as ws_router
+from .task_manager import task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,9 @@ def create_app() -> FastAPI:
     # 注册 API 路由
     app.include_router(api_router, prefix="/api")
 
+    # 注册 WebSocket 路由
+    app.include_router(ws_router, prefix="/api")
+
     # 模板引擎
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -91,6 +96,12 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """应用启动事件"""
+        import asyncio
+
+        # 设置 TaskManager 的事件循环
+        loop = asyncio.get_event_loop()
+        task_manager.set_loop(loop)
+
         logger.info("=" * 50)
         logger.info(f"{settings.app_name} v{settings.app_version} 启动中...")
         logger.info(f"调试模式: {settings.debug}")

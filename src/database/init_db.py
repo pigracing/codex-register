@@ -2,53 +2,8 @@
 数据库初始化和初始化数据
 """
 
-import json
-from datetime import datetime
 from .session import init_database
-from .crud import set_setting
 from .models import Base
-
-
-def init_default_settings(db):
-    """初始化默认设置"""
-    # 通用设置
-    default_settings = [
-        ("system.name", "OpenAI/Codex CLI 自动注册系统", "系统名称", "general"),
-        ("system.version", "2.0.0", "系统版本", "general"),
-        ("logs.retention_days", "30", "日志保留天数", "general"),
-
-        # OpenAI 配置
-        ("openai.client_id", "app_EMoamEEZ73f0CkXaXp7hrann", "OpenAI OAuth Client ID", "openai"),
-        ("openai.auth_url", "https://auth.openai.com/oauth/authorize", "OpenAI 认证地址", "openai"),
-        ("openai.token_url", "https://auth.openai.com/oauth/token", "OpenAI Token 地址", "openai"),
-        ("openai.redirect_uri", "http://localhost:1455/auth/callback", "OpenAI 回调地址", "openai"),
-        ("openai.scope", "openid email profile offline_access", "OpenAI 权限范围", "openai"),
-
-        # 代理设置
-        ("proxy.enabled", "false", "是否启用代理", "proxy"),
-        ("proxy.type", "http", "代理类型 (http/socks5)", "proxy"),
-        ("proxy.host", "127.0.0.1", "代理主机", "proxy"),
-        ("proxy.port", "7890", "代理端口", "proxy"),
-
-        # 注册设置
-        ("registration.max_retries", "3", "最大重试次数", "registration"),
-        ("registration.timeout", "120", "超时时间（秒）", "registration"),
-        ("registration.default_password_length", "12", "默认密码长度", "registration"),
-
-        # Web UI 设置
-        ("webui.host", "0.0.0.0", "Web UI 监听主机", "webui"),
-        ("webui.port", "8000", "Web UI 监听端口", "webui"),
-        ("webui.debug", "true", "调试模式", "webui"),
-    ]
-
-    for key, value, description, category in default_settings:
-        set_setting(db, key, value, description, category)
-
-
-def init_default_email_services(db):
-    """初始化默认邮箱服务（仅模板，需要用户配置）"""
-    # 这里只创建模板配置，实际配置需要用户通过 Web UI 设置
-    pass
 
 
 def initialize_database(database_url: str = None):
@@ -59,15 +14,13 @@ def initialize_database(database_url: str = None):
     # 初始化数据库连接和表
     db_manager = init_database(database_url)
 
-    # 在事务中设置默认配置
-    with db_manager.session_scope() as session:
-        # 初始化默认设置
-        init_default_settings(session)
+    # 创建表
+    db_manager.create_tables()
 
-        # 初始化默认邮箱服务
-        init_default_email_services(session)
+    # 初始化默认设置（从 settings 模块导入以避免循环导入）
+    from ..config.settings import init_default_settings
+    init_default_settings()
 
-    print("数据库初始化完成")
     return db_manager
 
 
@@ -86,9 +39,9 @@ def reset_database(database_url: str = None):
     db_manager.create_tables()
     print("已重新创建所有表")
 
-    # 初始化数据
-    with db_manager.session_scope() as session:
-        init_default_settings(session)
+    # 初始化默认设置
+    from ..config.settings import init_default_settings
+    init_default_settings()
 
     print("数据库重置完成")
     return db_manager

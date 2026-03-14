@@ -18,7 +18,14 @@ from src.config.settings import get_settings
 
 def setup_application():
     """设置应用程序"""
-    # 获取配置
+    # 初始化数据库（必须先于获取设置）
+    try:
+        initialize_database()
+    except Exception as e:
+        print(f"数据库初始化失败: {e}")
+        raise
+
+    # 获取配置（需要数据库已初始化）
     settings = get_settings()
 
     # 配置日志
@@ -28,14 +35,7 @@ def setup_application():
     )
 
     logger = logging.getLogger(__name__)
-
-    # 初始化数据库
-    try:
-        initialize_database()
-        logger.info("数据库初始化完成")
-    except Exception as e:
-        logger.error(f"数据库初始化失败: {e}")
-        raise
+    logger.info("数据库初始化完成")
 
     # 检查数据目录
     data_dir = project_root / "data"

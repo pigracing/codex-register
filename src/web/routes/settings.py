@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from ...database import crud
 from ...database.session import get_db
 from ...config.settings import get_settings, update_settings
-from ...config.constants import OTP_WAIT_TIMEOUT, OTP_POLL_INTERVAL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,11 +71,6 @@ async def get_all_settings():
     """获取所有设置"""
     settings = get_settings()
 
-    # 从数据库获取验证码设置
-    with get_db() as db:
-        timeout_setting = crud.get_setting(db, "email_code.timeout")
-        poll_interval_setting = crud.get_setting(db, "email_code.poll_interval")
-
     return {
         "proxy": {
             "enabled": settings.proxy_enabled,
@@ -104,8 +98,8 @@ async def get_all_settings():
             "max_retries": settings.tempmail_max_retries,
         },
         "email_code": {
-            "timeout": int(timeout_setting.value) if timeout_setting else OTP_WAIT_TIMEOUT,
-            "poll_interval": int(poll_interval_setting.value) if poll_interval_setting else OTP_POLL_INTERVAL,
+            "timeout": settings.email_code_timeout,
+            "poll_interval": settings.email_code_poll_interval,
         },
     }
 
@@ -409,40 +403,26 @@ async def update_tempmail_settings(request: TempmailSettings):
 @router.get("/email-code")
 async def get_email_code_settings():
     """获取验证码等待设置"""
-    with get_db() as db:
-        timeout_setting = crud.get_setting(db, "email_code.timeout")
-        poll_interval_setting = crud.get_setting(db, "email_code.poll_interval")
-
-        return {
-            "timeout": int(timeout_setting.value) if timeout_setting else OTP_WAIT_TIMEOUT,
-            "poll_interval": int(poll_interval_setting.value) if poll_interval_setting else OTP_POLL_INTERVAL,
-        }
+    settings = get_settings()
+    return {
+        "timeout": settings.email_code_timeout,
+        "poll_interval": settings.email_code_poll_interval,
+    }
 
 
 @router.post("/email-code")
 async def update_email_code_settings(request: EmailCodeSettings):
     """更新验证码等待设置"""
-    with get_db() as db:
-        # 验证参数范围
-        if request.timeout < 30 or request.timeout > 600:
-            raise HTTPException(status_code=400, detail="超时时间必须在 30-600 秒之间")
-        if request.poll_interval < 1 or request.poll_interval > 30:
-            raise HTTPException(status_code=400, detail="轮询间隔必须在 1-30 秒之间")
+    # 验证参数范围
+    if request.timeout < 30 or request.timeout > 600:
+        raise HTTPException(status_code=400, detail="超时时间必须在 30-600 秒之间")
+    if request.poll_interval < 1 or request.poll_interval > 30:
+        raise HTTPException(status_code=400, detail="轮询间隔必须在 1-30 秒之间")
 
-        crud.set_setting(
-            db,
-            "email_code.timeout",
-            str(request.timeout),
-            description="验证码等待超时（秒）",
-            category="email"
-        )
-        crud.set_setting(
-            db,
-            "email_code.poll_interval",
-            str(request.poll_interval),
-            description="验证码轮询间隔（秒）",
-            category="email"
-        )
+    update_settings(
+        email_code_timeout=request.timeout,
+        email_code_poll_interval=request.poll_interval,
+    )
 
     return {"success": True, "message": "验证码等待设置已更新"}
 

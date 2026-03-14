@@ -139,7 +139,7 @@ def main() -> None:
     sleep_max = max(sleep_min, args.sleep_max)
 
     count = 0
-    print("[Info] Yasal's Seamless OpenAI Auto-Registrar Started for ZJH (重构版本)")
+    print("[Info] OpenAI Auto-Registrar")
 
     while True:
         count += 1

@@ -18,6 +18,7 @@ from ...database.models import RegistrationTask, Proxy
 from ...core.register import RegistrationEngine, RegistrationResult
 from ...services import EmailServiceFactory, EmailServiceType
 from ...config.settings import get_settings
+from ..task_manager import task_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -169,10 +170,19 @@ def task_to_response(task: RegistrationTask) -> RegistrationTaskResponse:
     )
 
 
-async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None):
-    """异步执行注册任务"""
+def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None):
+    """
+    在线程池中执行的同步注册任务
+
+    这个函数会被 run_in_executor 调用，运行在独立线程中
+    """
     with get_db() as db:
         try:
+            # 检查是否已取消
+            if task_manager.is_cancelled(task_uuid):
+                logger.info(f"任务 {task_uuid} 已取消，跳过执行")
+                return
+
             # 更新任务状态为运行中
             task = crud.update_registration_task(
                 db, task_uuid,
@@ -183,6 +193,9 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
             if not task:
                 logger.error(f"任务不存在: {task_uuid}")
                 return
+
+            # 更新 TaskManager 状态
+            task_manager.update_status(task_uuid, "running")
 
             # 确定使用的代理
             # 如果前端传入了代理参数，使用传入的
@@ -284,10 +297,8 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
 
             email_service = EmailServiceFactory.create(service_type, config)
 
-            # 创建注册引擎
-            def log_callback(msg):
-                with get_db() as db_inner:
-                    crud.append_task_log(db_inner, task_uuid, msg)
+            # 创建注册引擎 - 使用 TaskManager 的日志回调
+            log_callback = task_manager.create_log_callback(task_uuid)
 
             engine = RegistrationEngine(
                 email_service=email_service,
@@ -314,6 +325,9 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
                     result=result.to_dict()
                 )
 
+                # 更新 TaskManager 状态
+                task_manager.update_status(task_uuid, "completed", email=result.email)
+
                 logger.info(f"注册任务完成: {task_uuid}, 邮箱: {result.email}")
             else:
                 # 更新任务状态为失败
@@ -323,6 +337,9 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
                     completed_at=datetime.utcnow(),
                     error_message=result.error_message
                 )
+
+                # 更新 TaskManager 状态
+                task_manager.update_status(task_uuid, "failed", error=result.error_message)
 
                 logger.warning(f"注册任务失败: {task_uuid}, 原因: {result.error_message}")
 
@@ -337,8 +354,43 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
                         completed_at=datetime.utcnow(),
                         error_message=str(e)
                     )
+
+                # 更新 TaskManager 状态
+                task_manager.update_status(task_uuid, "failed", error=str(e))
             except:
                 pass
+
+
+async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None):
+    """
+    异步执行注册任务
+
+    使用 run_in_executor 将同步任务放入线程池执行，避免阻塞主事件循环
+    """
+    loop = task_manager.get_loop()
+    if loop is None:
+        loop = asyncio.get_event_loop()
+        task_manager.set_loop(loop)
+
+    # 初始化 TaskManager 状态
+    task_manager.update_status(task_uuid, "pending")
+    task_manager.add_log(task_uuid, f"[系统] 任务 {task_uuid[:8]} 已加入队列")
+
+    try:
+        # 在线程池中执行同步任务
+        await loop.run_in_executor(
+            task_manager.executor,
+            _run_sync_registration_task,
+            task_uuid,
+            email_service_type,
+            proxy,
+            email_service_config,
+            email_service_id
+        )
+    except Exception as e:
+        logger.error(f"线程池执行异常: {task_uuid}, 错误: {e}")
+        task_manager.add_log(task_uuid, f"[错误] 线程池执行异常: {str(e)}")
+        task_manager.update_status(task_uuid, "failed", error=str(e))
 
 
 async def run_batch_registration(
@@ -351,7 +403,11 @@ async def run_batch_registration(
     interval_min: int,
     interval_max: int
 ):
-    """异步执行批量注册任务"""
+    """
+    异步执行批量注册任务
+
+    使用线程池执行每个注册任务，避免阻塞主事件循环
+    """
     batch_tasks[batch_id] = {
         "total": len(task_uuids),
         "completed": 0,
@@ -375,7 +431,7 @@ async def run_batch_registration(
 
             batch_tasks[batch_id]["current_index"] = i
 
-            # 运行单个注册任务
+            # 运行单个注册任务（使用线程池）
             await run_registration_task(
                 task_uuid, email_service_type, proxy, email_service_config, email_service_id
             )
@@ -802,7 +858,7 @@ async def get_outlook_accounts_for_registration():
         )
 
 
-async def run_outlook_batch_registration(
+def _run_sync_outlook_batch_registration(
     batch_id: str,
     service_ids: List[int],
     skip_registered: bool,
@@ -811,13 +867,15 @@ async def run_outlook_batch_registration(
     interval_max: int
 ):
     """
-    异步执行 Outlook 批量注册任务
-
-    遍历选中的 Outlook 服务，检查邮箱是否已注册，执行注册任务
+    在线程池中执行的同步 Outlook 批量注册任务
     """
     from ...database.models import EmailService as EmailServiceModel
     from ...database.models import Account
 
+    # 初始化 TaskManager 批量任务
+    task_manager.init_batch(batch_id, len(service_ids))
+
+    # 兼容旧版 batch_tasks（用于 REST API 轮询降级）
     batch_tasks[batch_id] = {
         "total": len(service_ids),
         "completed": 0,
@@ -830,14 +888,28 @@ async def run_outlook_batch_registration(
         "logs": []
     }
 
+    def add_batch_log(msg: str):
+        """同时添加日志到两个系统"""
+        batch_tasks[batch_id]["logs"].append(msg)
+        task_manager.add_batch_log(batch_id, msg)
+
+    def update_batch_status(**kwargs):
+        """同时更新两个系统的状态"""
+        for key, value in kwargs.items():
+            if key in batch_tasks[batch_id]:
+                batch_tasks[batch_id][key] = value
+        task_manager.update_batch_status(batch_id, **kwargs)
+
     try:
         for i, service_id in enumerate(service_ids):
             # 检查是否已取消
-            if batch_tasks[batch_id]["cancelled"]:
+            if task_manager.is_batch_cancelled(batch_id):
+                add_batch_log(f"[取消] 批量任务已取消")
+                update_batch_status(finished=True, status="cancelled")
                 logger.info(f"Outlook 批量任务 {batch_id} 已取消")
                 break
 
-            batch_tasks[batch_id]["current_index"] = i
+            update_batch_status(current_index=i)
 
             with get_db() as db:
                 # 获取邮箱服务
@@ -846,9 +918,9 @@ async def run_outlook_batch_registration(
                 ).first()
 
                 if not service:
-                    batch_tasks[batch_id]["logs"].append(f"[跳过] 服务 ID {service_id} 不存在")
-                    batch_tasks[batch_id]["skipped"] += 1
-                    batch_tasks[batch_id]["completed"] += 1
+                    add_batch_log(f"[跳过] 服务 ID {service_id} 不存在")
+                    update_batch_status(skipped=batch_tasks[batch_id]["skipped"] + 1,
+                                       completed=batch_tasks[batch_id]["completed"] + 1)
                     continue
 
                 config = service.config or {}
@@ -861,9 +933,9 @@ async def run_outlook_batch_registration(
                     ).first()
 
                     if existing_account:
-                        batch_tasks[batch_id]["logs"].append(f"[跳过] {email} 已注册 (账号 ID: {existing_account.id})")
-                        batch_tasks[batch_id]["skipped"] += 1
-                        batch_tasks[batch_id]["completed"] += 1
+                        add_batch_log(f"[跳过] {email} 已注册 (账号 ID: {existing_account.id})")
+                        update_batch_status(skipped=batch_tasks[batch_id]["skipped"] + 1,
+                                           completed=batch_tasks[batch_id]["completed"] + 1)
                         continue
 
                 # 创建注册任务
@@ -875,38 +947,80 @@ async def run_outlook_batch_registration(
                     email_service_id=service_id
                 )
 
-            batch_tasks[batch_id]["logs"].append(f"[注册] 开始注册 {email}...")
+            add_batch_log(f"[注册] 开始注册 {email}...")
 
-            # 运行单个注册任务
-            await run_registration_task(
-                task_uuid, "outlook", proxy, None, service_id
-            )
+            # 同步执行注册任务
+            _run_sync_registration_task(task_uuid, "outlook", proxy, None, service_id)
 
             # 更新统计
             with get_db() as db:
                 task = crud.get_registration_task(db, task_uuid)
                 if task:
-                    batch_tasks[batch_id]["completed"] += 1
+                    new_completed = batch_tasks[batch_id]["completed"] + 1
+                    new_success = batch_tasks[batch_id]["success"]
+                    new_failed = batch_tasks[batch_id]["failed"]
+
                     if task.status == "completed":
-                        batch_tasks[batch_id]["success"] += 1
-                        batch_tasks[batch_id]["logs"].append(f"[成功] {email} 注册成功")
+                        new_success += 1
+                        add_batch_log(f"[成功] {email} 注册成功")
                     elif task.status == "failed":
-                        batch_tasks[batch_id]["failed"] += 1
-                        batch_tasks[batch_id]["logs"].append(f"[失败] {email} 注册失败: {task.error_message}")
+                        new_failed += 1
+                        add_batch_log(f"[失败] {email} 注册失败: {task.error_message}")
+
+                    update_batch_status(
+                        completed=new_completed,
+                        success=new_success,
+                        failed=new_failed
+                    )
 
             # 如果不是最后一个任务，等待随机间隔
-            if i < len(service_ids) - 1 and not batch_tasks[batch_id]["cancelled"]:
+            if i < len(service_ids) - 1 and not task_manager.is_batch_cancelled(batch_id):
                 wait_time = random.randint(interval_min, interval_max)
                 logger.info(f"Outlook 批量任务 {batch_id}: 等待 {wait_time} 秒后继续下一个任务")
-                await asyncio.sleep(wait_time)
+                import time
+                time.sleep(wait_time)
 
-        logger.info(f"Outlook 批量任务 {batch_id} 完成: 成功 {batch_tasks[batch_id]['success']}, 失败 {batch_tasks[batch_id]['failed']}, 跳过 {batch_tasks[batch_id]['skipped']}")
+        # 完成批量任务
+        if not task_manager.is_batch_cancelled(batch_id):
+            add_batch_log(f"[完成] 批量任务完成！成功: {batch_tasks[batch_id]['success']}, 失败: {batch_tasks[batch_id]['failed']}, 跳过: {batch_tasks[batch_id]['skipped']}")
+            update_batch_status(finished=True, status="completed")
+            logger.info(f"Outlook 批量任务 {batch_id} 完成: 成功 {batch_tasks[batch_id]['success']}, 失败 {batch_tasks[batch_id]['failed']}, 跳过 {batch_tasks[batch_id]['skipped']}")
 
     except Exception as e:
         logger.error(f"Outlook 批量任务 {batch_id} 异常: {e}")
-        batch_tasks[batch_id]["logs"].append(f"[错误] 批量任务异常: {str(e)}")
-    finally:
-        batch_tasks[batch_id]["finished"] = True
+        add_batch_log(f"[错误] 批量任务异常: {str(e)}")
+        update_batch_status(finished=True, status="failed")
+
+
+async def run_outlook_batch_registration(
+    batch_id: str,
+    service_ids: List[int],
+    skip_registered: bool,
+    proxy: Optional[str],
+    interval_min: int,
+    interval_max: int
+):
+    """
+    异步执行 Outlook 批量注册任务
+
+    使用线程池执行，避免阻塞主事件循环
+    """
+    loop = task_manager.get_loop()
+    if loop is None:
+        loop = asyncio.get_event_loop()
+        task_manager.set_loop(loop)
+
+    # 在线程池中执行
+    await loop.run_in_executor(
+        task_manager.executor,
+        _run_sync_outlook_batch_registration,
+        batch_id,
+        service_ids,
+        skip_registered,
+        proxy,
+        interval_min,
+        interval_max
+    )
 
 
 @router.post("/outlook-batch", response_model=OutlookBatchRegistrationResponse)
@@ -1027,3 +1141,20 @@ async def get_outlook_batch_status(batch_id: str):
         "logs": batch.get("logs", []),
         "progress": f"{batch['completed']}/{batch['total']}"
     }
+
+
+@router.post("/outlook-batch/{batch_id}/cancel")
+async def cancel_outlook_batch(batch_id: str):
+    """取消 Outlook 批量任务"""
+    if batch_id not in batch_tasks:
+        raise HTTPException(status_code=404, detail="批量任务不存在")
+
+    batch = batch_tasks[batch_id]
+    if batch.get("finished"):
+        raise HTTPException(status_code=400, detail="批量任务已完成")
+
+    # 同时更新两个系统的取消状态
+    batch["cancelled"] = True
+    task_manager.cancel_batch(batch_id)
+
+    return {"success": True, "message": "批量任务取消请求已提交"}
