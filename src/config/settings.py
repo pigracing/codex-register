@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     tempmail_timeout: int = Field(default=30)
     tempmail_max_retries: int = Field(default=3)
 
+    # 验证码等待配置
+    email_code_timeout: int = Field(default=120)  # 验证码等待超时（秒）
+    email_code_poll_interval: int = Field(default=3)  # 验证码轮询间隔（秒）
+
     # 自定义域名邮箱配置
     custom_domain_base_url: str = Field(default="")
     custom_domain_api_key: Optional[SecretStr] = Field(default=None)

@@ -118,6 +118,7 @@ class RegistrationEngine:
         self.session: Optional[cffi_requests.Session] = None
         self.session_token: Optional[str] = None  # 会话令牌
         self.logs: list = []
+        self._otp_sent_at: Optional[float] = None  # OTP 发送时间戳
 
     def _log(self, message: str, level: str = "info"):
         """记录日志"""
@@ -346,6 +347,9 @@ class RegistrationEngine:
     def _send_verification_code(self) -> bool:
         """发送验证码"""
         try:
+            # 记录发送时间戳
+            self._otp_sent_at = time.time()
+
             response = self.session.get(
                 OPENAI_API_ENDPOINTS["send_otp"],
                 headers={
@@ -371,7 +375,8 @@ class RegistrationEngine:
                 email=self.email,
                 email_id=email_id,
                 timeout=120,
-                pattern=OTP_CODE_PATTERN
+                pattern=OTP_CODE_PATTERN,
+                otp_sent_at=self._otp_sent_at,
             )
 
             if code:

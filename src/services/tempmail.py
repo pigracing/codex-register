@@ -123,7 +123,8 @@ class TempmailService(BaseEmailService):
         email: str,
         email_id: str = None,
         timeout: int = 120,
-        pattern: str = OTP_CODE_PATTERN
+        pattern: str = OTP_CODE_PATTERN,
+        otp_sent_at: Optional[float] = None,
     ) -> Optional[str]:
         """
         从 Tempmail.lol 获取验证码
@@ -133,6 +134,7 @@ class TempmailService(BaseEmailService):
             email_id: 邮箱 token（如果不提供，从缓存中查找）
             timeout: 超时时间（秒）
             pattern: 验证码正则表达式
+            otp_sent_at: OTP 发送时间戳（Tempmail 服务暂不使用此参数）
 
         Returns:
             验证码字符串，如果超时或未找到返回 None

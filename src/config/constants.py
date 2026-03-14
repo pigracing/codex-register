@@ -118,6 +118,29 @@ OTP_WAIT_TIMEOUT = 120  # 秒
 OTP_POLL_INTERVAL = 3  # 秒
 OTP_MAX_ATTEMPTS = 40  # 最大轮询次数
 
+# 验证码提取正则（增强版）
+# 简单匹配：任意 6 位数字
+OTP_CODE_SIMPLE_PATTERN = r"(?<!\d)(\d{6})(?!\d)"
+# 语义匹配：带上下文的验证码（如 "code is 123456", "验证码 123456"）
+OTP_CODE_SEMANTIC_PATTERN = r'(?:code\s+is|验证码[是为]?\s*[:：]?\s*)(\d{6})'
+
+# OpenAI 验证邮件发件人
+OPENAI_EMAIL_SENDERS = [
+    "noreply@openai.com",
+    "no-reply@openai.com",
+    "@openai.com",  # 通配符匹配
+]
+
+# OpenAI 验证邮件关键词
+OPENAI_VERIFICATION_KEYWORDS = [
+    "verify your email",
+    "verification code",
+    "验证码",
+    "your openai code",
+    "code is",
+    "one-time code",
+]
+
 # 密码生成
 PASSWORD_CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 DEFAULT_PASSWORD_LENGTH = 12
