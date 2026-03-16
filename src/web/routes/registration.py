@@ -71,6 +71,7 @@ class RegistrationTaskCreate(BaseModel):
     proxy: Optional[str] = None
     email_service_config: Optional[dict] = None
     email_service_id: Optional[int] = None  # 使用数据库中已配置的邮箱服务 ID
+    auto_upload_cpa: bool = False  # 注册成功后自动上传到 CPA
 
 
 class BatchRegistrationRequest(BaseModel):
@@ -84,6 +85,7 @@ class BatchRegistrationRequest(BaseModel):
     interval_max: int = 30  # 最大间隔秒数
     concurrency: int = 1   # 并发线程数 (1-50)
     mode: str = "pipeline"  # 执行模式: "parallel" 或 "pipeline"
+    auto_upload_cpa: bool = False  # 注册成功后自动上传到 CPA
 
 
 class RegistrationTaskResponse(BaseModel):
@@ -146,6 +148,7 @@ class OutlookBatchRegistrationRequest(BaseModel):
     interval_max: int = 30
     concurrency: int = 1   # 并发线程数 (1-50)
     mode: str = "pipeline"  # 执行模式: "parallel" 或 "pipeline"
+    auto_upload_cpa: bool = False  # 注册成功后自动上传到 CPA
 
 
 class OutlookBatchRegistrationResponse(BaseModel):
@@ -176,7 +179,7 @@ def task_to_response(task: RegistrationTask) -> RegistrationTaskResponse:
     )
 
 
-def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = ""):
+def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False):
     """
     在线程池中执行的同步注册任务
 
@@ -333,6 +336,25 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                 # 保存到数据库
                 engine.save_to_database(result)
 
+                # 自动上传到 CPA
+                if auto_upload_cpa:
+                    try:
+                        from ...core.cpa_upload import upload_to_cpa, generate_token_json
+                        from ...database.models import Account as AccountModel
+                        saved_account = db.query(AccountModel).filter_by(email=result.email).first()
+                        if saved_account and saved_account.access_token:
+                            token_data = generate_token_json(saved_account)
+                            cpa_success, cpa_msg = upload_to_cpa(token_data)
+                            if cpa_success:
+                                saved_account.cpa_uploaded = True
+                                saved_account.cpa_uploaded_at = datetime.utcnow()
+                                db.commit()
+                                log_callback(f"[CPA] 已自动上传到 CPA: {result.email}")
+                            else:
+                                log_callback(f"[CPA] 上传失败: {cpa_msg}")
+                    except Exception as cpa_err:
+                        log_callback(f"[CPA] 上传异常: {cpa_err}")
+
                 # 更新任务状态
                 crud.update_registration_task(
                     db, task_uuid,
@@ -377,7 +399,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                 pass
 
 
-async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = ""):
+async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False):
     """
     异步执行注册任务
 
@@ -403,7 +425,8 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
             email_service_config,
             email_service_id,
             log_prefix,
-            batch_id
+            batch_id,
+            auto_upload_cpa
         )
     except Exception as e:
         logger.error(f"线程池执行异常: {task_uuid}, 错误: {e}")
@@ -449,7 +472,8 @@ async def run_batch_parallel(
     proxy: Optional[str],
     email_service_config: Optional[dict],
     email_service_id: Optional[int],
-    concurrency: int
+    concurrency: int,
+    auto_upload_cpa: bool = False
 ):
     """
     并行模式：所有任务同时提交，Semaphore 控制最大并发数
@@ -465,7 +489,7 @@ async def run_batch_parallel(
         async with semaphore:
             await run_registration_task(
                 uuid, email_service_type, proxy, email_service_config, email_service_id,
-                log_prefix=prefix, batch_id=batch_id
+                log_prefix=prefix, batch_id=batch_id, auto_upload_cpa=auto_upload_cpa
             )
         with get_db() as db:
             t = crud.get_registration_task(db, uuid)
@@ -506,7 +530,8 @@ async def run_batch_pipeline(
     email_service_id: Optional[int],
     interval_min: int,
     interval_max: int,
-    concurrency: int
+    concurrency: int,
+    auto_upload_cpa: bool = False
 ):
     """
     流水线模式：每隔 interval 秒启动一个新任务，Semaphore 限制最大并发数
@@ -522,7 +547,7 @@ async def run_batch_pipeline(
         try:
             await run_registration_task(
                 uuid, email_service_type, proxy, email_service_config, email_service_id,
-                log_prefix=pfx, batch_id=batch_id
+                log_prefix=pfx, batch_id=batch_id, auto_upload_cpa=auto_upload_cpa
             )
             with get_db() as db:
                 t = crud.get_registration_task(db, uuid)
@@ -587,19 +612,22 @@ async def run_batch_registration(
     interval_min: int,
     interval_max: int,
     concurrency: int = 1,
-    mode: str = "pipeline"
+    mode: str = "pipeline",
+    auto_upload_cpa: bool = False
 ):
     """根据 mode 分发到并行或流水线执行"""
     if mode == "parallel":
         await run_batch_parallel(
             batch_id, task_uuids, email_service_type, proxy,
-            email_service_config, email_service_id, concurrency
+            email_service_config, email_service_id, concurrency,
+            auto_upload_cpa=auto_upload_cpa
         )
     else:
         await run_batch_pipeline(
             batch_id, task_uuids, email_service_type, proxy,
             email_service_config, email_service_id,
-            interval_min, interval_max, concurrency
+            interval_min, interval_max, concurrency,
+            auto_upload_cpa=auto_upload_cpa
         )
 
 
@@ -643,7 +671,10 @@ async def start_registration(
         request.email_service_type,
         request.proxy,
         request.email_service_config,
-        request.email_service_id
+        request.email_service_id,
+        "",
+        "",
+        request.auto_upload_cpa
     )
 
     return task_to_response(task)
@@ -714,7 +745,8 @@ async def start_batch_registration(
         request.interval_min,
         request.interval_max,
         request.concurrency,
-        request.mode
+        request.mode,
+        request.auto_upload_cpa
     )
 
     return BatchRegistrationResponse(
@@ -1018,7 +1050,8 @@ async def run_outlook_batch_registration(
     interval_min: int,
     interval_max: int,
     concurrency: int = 1,
-    mode: str = "pipeline"
+    mode: str = "pipeline",
+    auto_upload_cpa: bool = False
 ):
     """
     异步执行 Outlook 批量注册任务，复用通用并发逻辑
@@ -1055,7 +1088,8 @@ async def run_outlook_batch_registration(
         interval_min=interval_min,
         interval_max=interval_max,
         concurrency=concurrency,
-        mode=mode
+        mode=mode,
+        auto_upload_cpa=auto_upload_cpa
     )
 
 
@@ -1153,7 +1187,8 @@ async def start_outlook_batch_registration(
         request.interval_min,
         request.interval_max,
         request.concurrency,
-        request.mode
+        request.mode,
+        request.auto_upload_cpa
     )
 
     return OutlookBatchRegistrationResponse(
