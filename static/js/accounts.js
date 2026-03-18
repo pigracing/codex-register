@@ -172,6 +172,7 @@ function initEventListeners() {
     document.addEventListener('click', () => {
         elements.exportMenu.classList.remove('active');
         uploadMenu.classList.remove('active');
+        document.querySelectorAll('#accounts-table .dropdown-menu.active').forEach(m => m.classList.remove('active'));
     });
 }
 
@@ -289,21 +290,21 @@ function renderAccounts(accounts) {
             </td>
             <td>${account.id}</td>
             <td>
-                <span class="email-cell" title="${escapeHtml(account.email)}">
-                    ${escapeHtml(account.email)}
+                <span style="display:inline-flex;align-items:center;gap:4px;">
+                    <span class="email-cell" title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>
+                    <button class="btn-copy-icon copy-email-btn" data-email="${escapeHtml(account.email)}" title="复制邮箱">📋</button>
                 </span>
             </td>
             <td class="password-cell">
                 ${account.password
-                    ? `<span class="password-hidden" onclick="togglePassword(this, '${escapeHtml(account.password)}')" title="点击查看">${escapeHtml(account.password.substring(0, 4) + '****')}</span>`
+                    ? `<span style="display:inline-flex;align-items:center;gap:4px;">
+                        <span class="password-hidden" data-pwd="${escapeHtml(account.password)}" onclick="togglePassword(this, this.dataset.pwd)" title="点击查看">${escapeHtml(account.password.substring(0, 4) + '****')}</span>
+                        <button class="btn-copy-icon copy-pwd-btn" data-pwd="${escapeHtml(account.password)}" title="复制密码">📋</button>
+                       </span>`
                     : '-'}
             </td>
             <td>${getServiceTypeText(account.email_service)}</td>
-            <td>
-                <span class="status-badge ${getStatusClass('account', account.status)}">
-                    ${getStatusText('account', account.status)}
-                </span>
-            </td>
+            <td>${getStatusIcon(account.status)}</td>
             <td>
                 <div class="cpa-status">
                     ${account.cpa_uploaded
@@ -320,26 +321,17 @@ function renderAccounts(accounts) {
             </td>
             <td>${format.date(account.last_refresh) || '-'}</td>
             <td>
-                <div class="action-buttons">
-                    <button class="btn btn-ghost btn-sm" onclick="refreshToken(${account.id})" title="刷新Token">
-                        🔄
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="uploadAccount(${account.id})" title="上传账号">
-                        ☁️
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="markSubscription(${account.id})" title="标记订阅">
-                        🏷️
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="viewAccount(${account.id})" title="查看详情">
-                        👁️
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="copyEmail('${escapeHtml(account.email)}')" title="复制邮箱">
-                        📋
-                    </button>
-                    ${account.password ? `<button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${escapeHtml(account.password)}')" title="复制密码">🔑</button>` : ''}
-                    <button class="btn btn-ghost btn-sm" onclick="deleteAccount(${account.id}, '${escapeHtml(account.email)}')" title="删除">
-                        🗑️
-                    </button>
+                <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
+                    <button class="btn btn-secondary btn-sm" onclick="viewAccount(${account.id})">详情</button>
+                    <div class="dropdown" style="position:relative;">
+                        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleMoreMenu(this)">更多</button>
+                        <div class="dropdown-menu" style="min-width:100px;">
+                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeMoreMenu(this);refreshToken(${account.id})">刷新</a>
+                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeMoreMenu(this);uploadAccount(${account.id})">上传</a>
+                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeMoreMenu(this);markSubscription(${account.id})">标记</a>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="deleteAccount(${account.id}, '${escapeHtml(account.email)}')">删除</button>
                 </div>
             </td>
         </tr>
@@ -362,6 +354,22 @@ function renderAccounts(accounts) {
             elements.selectAll.indeterminate = checkedCount > 0 && checkedCount < allChecked.length;
             updateBatchButtons();
             renderSelectAllBanner();
+        });
+    });
+
+    // 绑定复制邮箱按钮
+    elements.table.querySelectorAll('.copy-email-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            copyToClipboard(btn.dataset.email);
+        });
+    });
+
+    // 绑定复制密码按钮
+    elements.table.querySelectorAll('.copy-pwd-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            copyToClipboard(btn.dataset.pwd);
         });
     });
 
@@ -1104,6 +1112,20 @@ async function handleBatchUploadTm() {
     } finally {
         updateBatchButtons();
     }
+}
+
+// 更多菜单切换
+function toggleMoreMenu(btn) {
+    const menu = btn.nextElementSibling;
+    const isActive = menu.classList.contains('active');
+    // 关闭所有其他更多菜单
+    document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
+    if (!isActive) menu.classList.add('active');
+}
+
+function closeMoreMenu(el) {
+    const menu = el.closest('.dropdown-menu');
+    if (menu) menu.classList.remove('active');
 }
 
 // 保存账号 Cookies

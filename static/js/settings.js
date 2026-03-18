@@ -90,6 +90,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
 });
 
+document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
+});
+
 // 初始化标签页
 function initTabs() {
     elements.tabs.forEach(btn => {
@@ -424,11 +428,7 @@ function renderEmailServices(services) {
             </td>
             <td>${escapeHtml(service.name)}</td>
             <td>${getServiceTypeText(service.service_type)}</td>
-            <td>
-                <span class="status-badge ${service.enabled ? 'active' : 'disabled'}">
-                    ${service.enabled ? '已启用' : '已禁用'}
-                </span>
-            </td>
+            <td title="${service.enabled ? '已启用' : '已禁用'}">${service.enabled ? '✅' : '⭕'}</td>
             <td>${service.priority}</td>
             <td>${format.date(service.last_used)}</td>
             <td>
@@ -811,30 +811,36 @@ function renderProxies(proxies) {
                     : `<button class="btn btn-ghost btn-sm" onclick="handleSetProxyDefault(${proxy.id})" title="设为默认">设默认</button>`
                 }
             </td>
-            <td>
-                <span class="status-badge ${proxy.enabled ? 'active' : 'disabled'}">
-                    ${proxy.enabled ? '已启用' : '已禁用'}
-                </span>
-            </td>
+            <td title="${proxy.enabled ? '已启用' : '已禁用'}">${proxy.enabled ? '✅' : '⭕'}</td>
             <td>${format.date(proxy.last_used)}</td>
             <td>
-                <div class="action-buttons">
-                    <button class="btn btn-ghost btn-sm" onclick="testProxyItem(${proxy.id})" title="测试">
-                        🔌
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="editProxyItem(${proxy.id})" title="编辑">
-                        ✏️
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="toggleProxyItem(${proxy.id}, ${!proxy.enabled})" title="${proxy.enabled ? '禁用' : '启用'}">
-                        ${proxy.enabled ? '🔒' : '🔓'}
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="deleteProxyItem(${proxy.id})" title="删除">
-                        🗑️
-                    </button>
+                <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
+                    <button class="btn btn-secondary btn-sm" onclick="editProxyItem(${proxy.id})">编辑</button>
+                    <div class="dropdown" style="position:relative;">
+                        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleSettingsMoreMenu(this)">更多</button>
+                        <div class="dropdown-menu" style="min-width:80px;">
+                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);testProxyItem(${proxy.id})">测试</a>
+                            <a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);toggleProxyItem(${proxy.id}, ${!proxy.enabled})">${proxy.enabled ? '禁用' : '启用'}</a>
+                            ${!proxy.is_default ? `<a href="#" class="dropdown-item" onclick="event.preventDefault();closeSettingsMoreMenu(this);handleSetProxyDefault(${proxy.id})">设为默认</a>` : ''}
+                        </div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="deleteProxyItem(${proxy.id})">删除</button>
                 </div>
             </td>
         </tr>
     `).join('');
+}
+
+function toggleSettingsMoreMenu(btn) {
+    const menu = btn.nextElementSibling;
+    const isActive = menu.classList.contains('active');
+    document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
+    if (!isActive) menu.classList.add('active');
+}
+
+function closeSettingsMoreMenu(el) {
+    const menu = el.closest('.dropdown-menu');
+    if (menu) menu.classList.remove('active');
 }
 
 // 设为默认代理
@@ -1070,11 +1076,7 @@ function renderTmServicesTable(services) {
         <tr>
             <td>${escapeHtml(s.name)}</td>
             <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td>
-                <span class="badge" style="background:${s.enabled ? 'var(--success-color)' : 'var(--border)'};color:${s.enabled ? '#fff' : 'var(--text-muted)'};font-size:0.75rem;padding:2px 8px;border-radius:10px;">
-                    ${s.enabled ? '启用' : '禁用'}
-                </span>
-            </td>
+            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
             <td style="text-align:center;">${s.priority}</td>
             <td style="white-space:nowrap;">
                 <button class="btn btn-secondary btn-sm" onclick="editTmService(${s.id})">编辑</button>
@@ -1235,11 +1237,7 @@ function renderCpaServicesTable(services) {
         <tr>
             <td>${escapeHtml(s.name)}</td>
             <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td>
-                <span class="badge" style="background:${s.enabled ? 'var(--success-color)' : 'var(--border)'};color:${s.enabled ? '#fff' : 'var(--text-muted)'};font-size:0.75rem;padding:2px 8px;border-radius:10px;">
-                    ${s.enabled ? '启用' : '禁用'}
-                </span>
-            </td>
+            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
             <td style="text-align:center;">${s.priority}</td>
             <td style="white-space:nowrap;">
                 <button class="btn btn-secondary btn-sm" onclick="editCpaService(${s.id})">编辑</button>
@@ -1402,11 +1400,7 @@ function renderSub2ApiServices(services) {
         <tr>
             <td>${escapeHtml(s.name)}</td>
             <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
-            <td>
-                <span class="badge" style="background:${s.enabled ? 'var(--success-color)' : 'var(--border)'};color:${s.enabled ? '#fff' : 'var(--text-muted)'};font-size:0.75rem;padding:2px 8px;border-radius:10px;">
-                    ${s.enabled ? '启用' : '禁用'}
-                </span>
-            </td>
+            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
             <td style="text-align:center;">${s.priority}</td>
             <td style="white-space:nowrap;">
                 <button class="btn btn-secondary btn-sm" onclick="editSub2ApiService(${s.id})">编辑</button>

@@ -368,6 +368,19 @@ function getServiceTypeText(type) {
     return statusMap.service[type] || type;
 }
 
+const accountStatusIconMap = {
+    active:  { icon: '🟢', title: '活跃' },
+    expired: { icon: '🟡', title: '过期' },
+    banned:  { icon: '🔴', title: '封禁' },
+    failed:  { icon: '❌', title: '失败' },
+};
+
+function getStatusIcon(status) {
+    const s = accountStatusIconMap[status];
+    if (!s) return `<span title="${status}">⚪</span>`;
+    return `<span title="${s.title}">${s.icon}</span>`;
+}
+
 // ============================================
 // 确认对话框
 // ============================================
@@ -420,10 +433,29 @@ function confirm(message, title = '确认操作') {
 // ============================================
 
 async function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            toast.success('已复制到剪贴板');
+            return true;
+        } catch (err) {
+            // 降级到 execCommand
+        }
+    }
     try {
-        await navigator.clipboard.writeText(text);
-        toast.success('已复制到剪贴板');
-        return true;
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) {
+            toast.success('已复制到剪贴板');
+            return true;
+        }
+        throw new Error('execCommand failed');
     } catch (err) {
         toast.error('复制失败');
         return false;
@@ -498,3 +530,4 @@ window.throttle = throttle;
 window.getStatusText = getStatusText;
 window.getStatusClass = getStatusClass;
 window.getServiceTypeText = getServiceTypeText;
+window.getStatusIcon = getStatusIcon;

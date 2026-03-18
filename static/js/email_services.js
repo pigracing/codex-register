@@ -145,6 +145,23 @@ function initEventListeners() {
     // 临时邮箱配置
     elements.tempmailForm.addEventListener('submit', handleSaveTempmail);
     elements.testTempmailBtn.addEventListener('click', handleTestTempmail);
+
+    // 点击其他地方关闭更多菜单
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
+    });
+}
+
+function toggleEmailMoreMenu(btn) {
+    const menu = btn.nextElementSibling;
+    const isActive = menu.classList.contains('active');
+    document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
+    if (!isActive) menu.classList.add('active');
+}
+
+function closeEmailMoreMenu(el) {
+    const menu = el.closest('.dropdown-menu');
+    if (menu) menu.classList.remove('active');
 }
 
 // 切换添加表单子类型
@@ -211,19 +228,20 @@ async function loadOutlookServices() {
                         ${service.config?.has_oauth ? 'OAuth' : '密码'}
                     </span>
                 </td>
-                <td>
-                    <span class="status-badge ${service.enabled ? 'active' : 'disabled'}">
-                        ${service.enabled ? '启用' : '禁用'}
-                    </span>
-                </td>
+                <td title="${service.enabled ? '已启用' : '已禁用'}">${service.enabled ? '✅' : '⭕'}</td>
                 <td>${service.priority}</td>
                 <td>${format.date(service.last_used)}</td>
                 <td>
-                    <div class="action-buttons">
-                        <button class="btn btn-ghost btn-sm" onclick="editOutlookService(${service.id})" title="编辑">✏️</button>
-                        <button class="btn btn-ghost btn-sm" onclick="toggleService(${service.id}, ${!service.enabled})" title="${service.enabled ? '禁用' : '启用'}">${service.enabled ? '🔇' : '🔊'}</button>
-                        <button class="btn btn-ghost btn-sm" onclick="testService(${service.id})" title="测试">🔌</button>
-                        <button class="btn btn-ghost btn-sm" onclick="deleteService(${service.id}, '${escapeHtml(service.name)}')" title="删除">🗑️</button>
+                    <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="editOutlookService(${service.id})">编辑</button>
+                        <div class="dropdown" style="position:relative;">
+                            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleEmailMoreMenu(this)">更多</button>
+                            <div class="dropdown-menu" style="min-width:80px;">
+                                <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);toggleService(${service.id}, ${!service.enabled})">${service.enabled ? '禁用' : '启用'}</a>
+                                <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);testService(${service.id})">测试</a>
+                            </div>
+                        </div>
+                        <button class="btn btn-danger btn-sm" onclick="deleteService(${service.id}, '${escapeHtml(service.name)}')">删除</button>
                     </div>
                 </td>
             </tr>
@@ -281,15 +299,20 @@ async function loadCustomServices() {
                 <td>${escapeHtml(service.name)}</td>
                 <td>${typeLabel}</td>
                 <td style="font-size: 0.75rem;">${escapeHtml(addr)}</td>
-                <td><span class="status-badge ${service.enabled ? 'active' : 'disabled'}">${service.enabled ? '启用' : '禁用'}</span></td>
+                <td title="${service.enabled ? '已启用' : '已禁用'}">${service.enabled ? '✅' : '⭕'}</td>
                 <td>${service.priority}</td>
                 <td>${format.date(service.last_used)}</td>
                 <td>
-                    <div class="action-buttons">
-                        <button class="btn btn-ghost btn-sm" onclick="editCustomService(${service.id}, '${service._subType}')" title="编辑">✏️</button>
-                        <button class="btn btn-ghost btn-sm" onclick="toggleService(${service.id}, ${!service.enabled})" title="${service.enabled ? '禁用' : '启用'}">${service.enabled ? '🔇' : '🔊'}</button>
-                        <button class="btn btn-ghost btn-sm" onclick="testService(${service.id})" title="测试">🔌</button>
-                        <button class="btn btn-ghost btn-sm" onclick="deleteService(${service.id}, '${escapeHtml(service.name)}')" title="删除">🗑️</button>
+                    <div style="display:flex;gap:4px;align-items:center;white-space:nowrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="editCustomService(${service.id}, '${service._subType}')">编辑</button>
+                        <div class="dropdown" style="position:relative;">
+                            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleEmailMoreMenu(this)">更多</button>
+                            <div class="dropdown-menu" style="min-width:80px;">
+                                <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);toggleService(${service.id}, ${!service.enabled})">${service.enabled ? '禁用' : '启用'}</a>
+                                <a href="#" class="dropdown-item" onclick="event.preventDefault();closeEmailMoreMenu(this);testService(${service.id})">测试</a>
+                            </div>
+                        </div>
+                        <button class="btn btn-danger btn-sm" onclick="deleteService(${service.id}, '${escapeHtml(service.name)}')">删除</button>
                     </div>
                 </td>
             </tr>`;

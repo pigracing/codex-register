@@ -439,6 +439,30 @@ body {
     color: var(--text-secondary);
 }
 
+.btn-copy-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-copy-icon:hover {
+    background: var(--primary-light);
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
 .btn-ghost:hover:not(:disabled) {
     background: var(--surface-hover);
     color: var(--text-primary);

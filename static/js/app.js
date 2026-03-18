@@ -898,26 +898,32 @@ async function loadRecentAccounts() {
             <tr data-id="${account.id}">
                 <td>${account.id}</td>
                 <td>
-                    <span title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>
-                </td>
-                <td class="password-cell">
-                    ${account.password ? `<span class="password-hidden" title="点击查看">${escapeHtml(account.password.substring(0, 8))}...</span>` : '-'}
-                </td>
-                <td>
-                    <span class="status-badge ${getStatusClass('account', account.status)}" style="font-size: 0.7rem;">
-                        ${getStatusText('account', account.status)}
+                    <span style="display:inline-flex;align-items:center;gap:4px;">
+                        <span title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>
+                        <button class="btn-copy-icon copy-email-btn" data-email="${escapeHtml(account.email)}" title="复制邮箱">📋</button>
                     </span>
                 </td>
+                <td class="password-cell">
+                    ${account.password
+                        ? `<span style="display:inline-flex;align-items:center;gap:4px;">
+                            <span class="password-hidden" title="点击查看">${escapeHtml(account.password.substring(0, 8))}...</span>
+                            <button class="btn-copy-icon copy-pwd-btn" data-pwd="${escapeHtml(account.password)}" title="复制密码">📋</button>
+                           </span>`
+                        : '-'}
+                </td>
                 <td>
-                    <div class="action-buttons">
-                        <button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${escapeHtml(account.email)}')" title="复制邮箱">
-                            📋
-                        </button>
-                        ${account.password ? `<button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${escapeHtml(account.password)}')" title="复制密码">🔑</button>` : ''}
-                    </div>
+                    ${getStatusIcon(account.status)}
                 </td>
             </tr>
         `).join('');
+
+        // 绑定复制按钮事件
+        elements.recentAccountsTable.querySelectorAll('.copy-email-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => { e.stopPropagation(); copyToClipboard(btn.dataset.email); });
+        });
+        elements.recentAccountsTable.querySelectorAll('.copy-pwd-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => { e.stopPropagation(); copyToClipboard(btn.dataset.pwd); });
+        });
 
     } catch (error) {
         console.error('加载账号列表失败:', error);
